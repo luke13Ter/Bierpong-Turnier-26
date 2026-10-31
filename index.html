@@ -225,7 +225,24 @@ function drawSchedule() {
   }
   return rounds;
 }
-function fresh(teams) { return { cups: 10, teams: teams || DEFAULT_TEAMS.slice(), rounds: drawSchedule(), scores: {}, final: [0, 0] }; }
+// Fester Spielplan, passend zur tatsächlich gespielten Runde 1.
+// Teams: 0 Leni & Tobi, 1 Vivien & Lukas, 2 Paul, 3 Diana & Lenny, 4 Flo & Sandra
+const SCHEDULE_ID = 'fest-1';
+const FIXED_ROUNDS = [
+  { bye: 4, matches: [[1, 2], [0, 3]] },
+  { bye: 0, matches: [[1, 3], [2, 4]] },
+  { bye: 1, matches: [[0, 4], [2, 3]] },
+  { bye: 2, matches: [[0, 1], [3, 4]] },
+  { bye: 3, matches: [[0, 2], [1, 4]] }
+];
+function fixedRounds() { return JSON.parse(JSON.stringify(FIXED_ROUNDS)); }
+function fresh(teams) { return { cups: 10, teams: teams || DEFAULT_TEAMS.slice(), rounds: fixedRounds(), scheduleId: SCHEDULE_ID, scores: {}, final: [0, 0] }; }
+// Alte, zufällig ausgeloste Pläne ohne Ergebnisse auf den festen Plan umstellen
+function needsMigration(v) {
+  if (v.scheduleId) return false;
+  const anyResult = Object.values(v.scores || {}).some(x => x && (+x[0] > 0 || +x[1] > 0));
+  return !anyResult;
+}
 function load() { try { const s = JSON.parse(localStorage.getItem(KEY)); return s && s.rounds ? s : null; } catch (e) { return null; } }
 function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} }
 
@@ -398,7 +415,8 @@ function commit(paths, whole) {
 
 function start() {
   if (LOCAL) {
-    S = normalize(load() || fresh()); save();
+    S = load(); if (!S || needsMigration(S)) S = fresh(S && S.teams);
+    S = normalize(S); save();
     setSync('', 'Nur dieses Gerät');
     if (CONFIGURED) showError('Firebase konnte nicht geladen werden (keine Internetverbindung?). Ergebnisse werden nur auf diesem Gerät gespeichert. Seite neu laden, sobald du online bist.');
     render(); return;
@@ -409,7 +427,12 @@ function start() {
   dbRef.transaction(cur => cur || fresh()).catch(showError);
   dbRef.on('value', snap => {
     const v = snap.val();
-    if (v && v.rounds) { S = normalize(v); render(); }
+    if (!v || !v.rounds) return;
+    if (needsMigration(v)) {
+      dbRef.update({ rounds: fixedRounds(), scheduleId: SCHEDULE_ID, scores: null, final: [0, 0] }).catch(showError);
+      return;
+    }
+    S = normalize(v); render();
   }, showError);
   db.ref('.info/connected').on('value', s => s.val() ? setSync('live', 'Live') : setSync('offline', 'Offline'));
 }
@@ -438,7 +461,7 @@ document.getElementById('app').addEventListener('click', e => {
     S.final = S.final.map(v => Math.min(v, S.cups));
     return commit({ cups: S.cups, scores: S.scores, final: S.final });
   }
-  if (act === 'do-redraw') { S = { ...fresh(S.teams), cups: S.cups }; ui.confirm = null; ui.pick = {}; ui.tab = 'spiele'; return commit(null, true); }
+  if (act === 'do-redraw') { S = { ...fresh(S.teams), cups: S.cups, rounds: drawSchedule(), scheduleId: 'los-' + Date.now() }; ui.confirm = null; ui.pick = {}; ui.tab = 'spiele'; return commit(null, true); }
   if (act === 'do-reset') { S.scores = {}; S.final = [0, 0]; ui.confirm = null; ui.pick = {}; ui.tab = 'spiele'; return commit({ scores: null, final: [0, 0] }); }
   if (act === 'ask-redraw') ui.confirm = 'redraw';
   if (act === 'ask-reset') ui.confirm = 'reset';
