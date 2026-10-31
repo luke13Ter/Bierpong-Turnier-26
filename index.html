@@ -61,6 +61,13 @@ header.top { display: grid; gap: 4px; padding-bottom: 14px; }
 h1 { font-family: var(--display); font-weight: 400; font-size: 30px; line-height: 1.05; margin: 0; text-wrap: balance; }
 h1 span { color: var(--cup); }
 .rules { color: var(--muted); font-size: 13px; margin: 0; }
+.headrow { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.sync { font: 600 11px var(--body); text-transform: uppercase; letter-spacing: .08em; padding: 3px 9px; border-radius: 999px; background: var(--line); color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+.sync::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.sync.live { background: var(--ok-soft); color: var(--ok); }
+.sync.offline { background: var(--cup-soft); color: var(--cup); }
+.error { margin-top: 10px; padding: 10px 12px; border-radius: 10px; background: var(--cup-soft); color: var(--cup); font-size: 13px; }
+.loading { padding: 40px 0; text-align: center; color: var(--muted); }
 
 nav.tabs {
   position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
@@ -153,7 +160,7 @@ tr.fin td:nth-child(2) { font-weight: 700; }
 <body>
 <div class="wrap">
   <header class="top">
-    <div class="eyebrow">Sa, 31. Oktober · 5 Teams · 2 Tische</div>
+    <div class="headrow"><div class="eyebrow">Sa, 31. Oktober · 5 Teams · 2 Tische</div><span id="sync" class="sync">Verbinde…</span></div>
     <h1>Halloween-<span>Bierpong</span></h1>
     <p class="rules">Jeder gegen jeden, dann Finale der Top 2. Sieg = 10 Punkte, plus 1 Punkt pro übrigem Becher.</p>
   </header>
@@ -162,16 +169,38 @@ tr.fin td:nth-child(2) { font-weight: 700; }
     <button id="tab-tabelle" role="tab" data-tab="tabelle">Tabelle</button>
     <button id="tab-setup" role="tab" data-tab="setup">Setup</button>
   </nav>
-  <main id="app"></main>
+  <div id="err" class="error" hidden></div>
+  <main id="app"><p class="loading">Lade Turnier…</p></main>
 </div>
 
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <script>
+/* ============================================================
+   FIREBASE-CONFIG HIER EINFÜGEN
+   (Firebase-Konsole → Projekteinstellungen → Deine Apps → Web-App → "Config")
+   Solange hier Platzhalter stehen, speichert die Seite nur lokal im Browser.
+   ============================================================ */
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyAC6xSvM7MNg_Bi9NLIiRK7ZgT_9BmXVQU",
+  authDomain: "bierpong-26.firebaseapp.com",
+  databaseURL: "https://bierpong-26-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "bierpong-26",
+  storageBucket: "bierpong-26.firebasestorage.app",
+  messagingSenderId: "1005203388751",
+  appId: "1:1005203388751:web:77336a03efa80f6c04ad3a"
+};
+const ROOT = 'turniere/halloween-2026';
+const CONFIGURED = !/HIER_EINFUEGEN/.test(FIREBASE_CONFIG.apiKey + FIREBASE_CONFIG.databaseURL);
+const LOCAL = !CONFIGURED || typeof firebase === 'undefined';
+let dbRef = null;
+
 const KEY = 'bierpong-2026-10-31';
 const DEFAULT_TEAMS = ['Leni & Tobi', 'Vivien & Lukas', 'Paul', 'Diana & Lenny', 'Flo & Sandra'];
 const RACKS = { 6: [3, 2, 1], 10: [4, 3, 2, 1] };
 
 let ui = { tab: 'spiele', confirm: null };
-let S = load() || fresh();
+let S = null;
 
 function shuffle(a) { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
 
@@ -306,10 +335,66 @@ function viewSetup() {
 }
 
 function render() {
-  const focusId = document.activeElement && document.activeElement.id;
+  if (!S) return;
+  const a = document.activeElement;
+  const focusId = a && a.id;
+  const typing = a && a.dataset && a.dataset.team != null ? { v: a.value, s: a.selectionStart, e: a.selectionEnd } : null;
   document.querySelectorAll('nav.tabs button').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === ui.tab));
   document.getElementById('app').innerHTML = ui.tab === 'spiele' ? viewSpiele() : ui.tab === 'tabelle' ? viewTabelle() : viewSetup();
-  if (focusId) { const el = document.getElementById(focusId); if (el && !el.disabled) el.focus(); }
+  if (focusId) {
+    const el = document.getElementById(focusId);
+    if (el && !el.disabled) {
+      el.focus();
+      if (typing) { el.value = typing.v; try { el.setSelectionRange(typing.s, typing.e); } catch (e) {} }
+    }
+  }
+}
+
+/* ---------- Speichern: Firebase (live für alle) oder lokal ---------- */
+function setSync(state, text) {
+  const el = document.getElementById('sync');
+  el.className = 'sync ' + state; el.textContent = text;
+}
+function showError(err) {
+  const box = document.getElementById('err');
+  const msg = String(err && (err.code || err.message) || err);
+  box.textContent = /konnte nicht/.test(msg) ? msg : /permission/i.test(msg)
+    ? 'Firebase verweigert den Zugriff. Prüfe die Datenbank-Regeln (Anleitung Schritt 4).'
+    : 'Speichern fehlgeschlagen: ' + msg;
+  box.hidden = false;
+}
+function normalize(v) {
+  v.scores = v.scores || {};
+  Object.keys(v.scores).forEach(k => { const x = v.scores[k] || []; v.scores[k] = [+x[0] || 0, +x[1] || 0]; });
+  const f = v.final || []; v.final = [+f[0] || 0, +f[1] || 0];
+  v.cups = v.cups === 6 ? 6 : 10;
+  v.teams = DEFAULT_TEAMS.map((d, i) => (v.teams && v.teams[i]) || d);
+  return v;
+}
+// paths: Teil-Updates wie {"scores/0-1": [3,0]}; whole=true ersetzt alles (Neu auslosen)
+function commit(paths, whole) {
+  render();
+  if (LOCAL) { save(); return; }
+  const p = whole ? dbRef.set(S) : dbRef.update(paths);
+  p.then(() => { document.getElementById('err').hidden = true; }).catch(showError);
+}
+
+function start() {
+  if (LOCAL) {
+    S = normalize(load() || fresh()); save();
+    setSync('', 'Nur dieses Gerät');
+    if (CONFIGURED) showError('Firebase konnte nicht geladen werden (keine Internetverbindung?). Ergebnisse werden nur auf diesem Gerät gespeichert. Seite neu laden, sobald du online bist.');
+    render(); return;
+  }
+  firebase.initializeApp(FIREBASE_CONFIG);
+  const db = firebase.database();
+  dbRef = db.ref(ROOT);
+  dbRef.transaction(cur => cur || fresh()).catch(showError);
+  dbRef.on('value', snap => {
+    const v = snap.val();
+    if (v && v.rounds) { S = normalize(v); render(); }
+  }, showError);
+  db.ref('.info/connected').on('value', s => s.val() ? setSync('live', 'Live') : setSync('offline', 'Offline'));
 }
 
 document.querySelector('nav.tabs').addEventListener('click', e => {
@@ -317,33 +402,36 @@ document.querySelector('nav.tabs').addEventListener('click', e => {
   ui.tab = b.dataset.tab; ui.confirm = null; render();
 });
 document.getElementById('app').addEventListener('click', e => {
-  const b = e.target.closest('button'); if (!b) return;
+  const b = e.target.closest('button'); if (!b || !S) return;
   if (b.dataset.k) {
     const k = b.dataset.k, s = +b.dataset.s, d = +b.dataset.d;
     const sc = (k === 'F' ? S.final : S.scores[k]) || [0, 0];
     const next = sc.slice(); next[s] = Math.max(0, Math.min(S.cups, next[s] + d));
-    // Ein Team auf >0 setzen, während das andere auch >0 hat, ist erlaubt (Hinweis erscheint), damit man korrigieren kann
     if (k === 'F') S.final = next; else S.scores[k] = next;
-    save(); render(); return;
+    commit({ [k === 'F' ? 'final' : 'scores/' + k]: next }); return;
   }
   const act = b.dataset.act;
   if (act === 'cups') {
     S.cups = +b.dataset.n;
     Object.values(S.scores).forEach(sc => { sc[0] = Math.min(sc[0], S.cups); sc[1] = Math.min(sc[1], S.cups); });
     S.final = S.final.map(v => Math.min(v, S.cups));
+    return commit({ cups: S.cups, scores: S.scores, final: S.final });
   }
+  if (act === 'do-redraw') { S = { ...fresh(S.teams), cups: S.cups }; ui.confirm = null; ui.tab = 'spiele'; return commit(null, true); }
+  if (act === 'do-reset') { S.scores = {}; S.final = [0, 0]; ui.confirm = null; ui.tab = 'spiele'; return commit({ scores: null, final: [0, 0] }); }
   if (act === 'ask-redraw') ui.confirm = 'redraw';
   if (act === 'ask-reset') ui.confirm = 'reset';
   if (act === 'cancel') ui.confirm = null;
-  if (act === 'do-redraw') { S = { ...fresh(S.teams), cups: S.cups }; ui.confirm = null; ui.tab = 'spiele'; }
-  if (act === 'do-reset') { S.scores = {}; S.final = [0, 0]; ui.confirm = null; ui.tab = 'spiele'; }
-  save(); render();
+  render();
 });
-document.getElementById('app').addEventListener('input', e => {
-  const i = e.target.dataset.team; if (i == null) return;
-  S.teams[+i] = e.target.value || ('Team ' + (+i + 1)); save();
+// Teamnamen werden beim Verlassen des Feldes gespeichert
+document.getElementById('app').addEventListener('change', e => {
+  const i = e.target.dataset.team; if (i == null || !S) return;
+  const name = e.target.value.trim() || ('Team ' + (+i + 1));
+  S.teams[+i] = name;
+  commit({ ['teams/' + i]: name });
 });
-save(); render();
+start();
 </script>
 </body>
 </html>
