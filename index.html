@@ -196,7 +196,7 @@ const FIREBASE_CONFIG = {
   messagingSenderId: "1005203388751",
   appId: "1:1005203388751:web:77336a03efa80f6c04ad3a"
 };
-const ROOT = 'turniere/halloween-2026';
+const ROOT = 'turniere/bierpong-26-v2'; // frischer Speicherplatz, alte Daten bleiben unberührt
 const CONFIGURED = !/HIER_EINFUEGEN/.test(FIREBASE_CONFIG.apiKey + FIREBASE_CONFIG.databaseURL);
 const LOCAL = !CONFIGURED || typeof firebase === 'undefined';
 let dbRef = null;
@@ -361,8 +361,8 @@ function viewSetup() {
     <div class="panel"><h3>Teams</h3>
       ${S.teams.map((n, i) => `<div class="field"><label for="team-${i}">Team ${i + 1}</label><input id="team-${i}" data-team="${i}" value="${esc(n)}"></div>`).join('')}</div>
     <div class="panel"><h3>Spielplan</h3>
-      ${c === 'redraw' ? confirmBox('redraw', 'Neue Auslosung löscht alle eingetragenen Ergebnisse.', 'Neu auslosen')
-        : `<button class="btn" id="b-redraw" data-act="ask-redraw">Spielplan neu auslosen</button>`}
+      ${c === 'redraw' ? confirmBox('redraw', 'Stellt den festen Spielplan wieder her und löscht alle Ergebnisse.', 'Wiederherstellen')
+        : `<button class="btn" id="b-redraw" data-act="ask-redraw">Spielplan wiederherstellen</button>`}
       ${c === 'reset' ? confirmBox('reset', 'Alle Ergebnisse inklusive Finale werden gelöscht. Der Spielplan bleibt.', 'Löschen')
         : `<button class="btn danger" id="b-reset" data-act="ask-reset">Ergebnisse löschen</button>`}
     </div>`;
@@ -461,7 +461,7 @@ document.getElementById('app').addEventListener('click', e => {
     S.final = S.final.map(v => Math.min(v, S.cups));
     return commit({ cups: S.cups, scores: S.scores, final: S.final });
   }
-  if (act === 'do-redraw') { S = { ...fresh(S.teams), cups: S.cups, rounds: drawSchedule(), scheduleId: 'los-' + Date.now() }; ui.confirm = null; ui.pick = {}; ui.tab = 'spiele'; return commit(null, true); }
+  if (act === 'do-redraw') { S = { ...fresh(S.teams), cups: S.cups }; ui.confirm = null; ui.pick = {}; ui.tab = 'spiele'; return commit(null, true); }
   if (act === 'do-reset') { S.scores = {}; S.final = [0, 0]; ui.confirm = null; ui.pick = {}; ui.tab = 'spiele'; return commit({ scores: null, final: [0, 0] }); }
   if (act === 'ask-redraw') ui.confirm = 'redraw';
   if (act === 'ask-reset') ui.confirm = 'reset';
