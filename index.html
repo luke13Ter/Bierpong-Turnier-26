@@ -71,7 +71,7 @@ h1 span { color: var(--cup); }
 
 nav.tabs {
   position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
-  display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px;
+  display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 4px;
   background: var(--bg); padding-block: 8px;
 }
 nav.tabs button {
@@ -91,6 +91,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--cup); outli
 }
 .champ small { font-size: 12px; text-transform: uppercase; letter-spacing: .09em; opacity: .85; font-weight: 600; }
 .champ strong { font-family: var(--display); font-weight: 400; font-size: 26px; line-height: 1.1; }
+.champ span { font-size: 14px; opacity: .9; }
 
 section.round { margin-top: 22px; display: grid; gap: 10px; }
 .round-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
@@ -115,6 +116,7 @@ section.round { margin-top: 22px; display: grid; gap: 10px; }
   overflow-wrap: anywhere; line-height: 1.2;
 }
 .team-btn:disabled { cursor: default; opacity: .6; }
+.team-btn.win:disabled, .team-btn.lose:disabled { opacity: 1; }
 .team-btn.win { background: var(--cup); border-color: var(--cup); color: #fff; }
 .team-btn.lose { color: var(--muted); }
 .team-btn.pick { border-color: var(--cup); color: var(--cup); background: var(--cup-soft); }
@@ -145,6 +147,8 @@ td.pts { font-weight: 700; font-size: 17px; }
 tr.fin td:first-child { color: var(--cup); font-family: var(--display); }
 tr.fin td:nth-child(2) { font-weight: 700; }
 .note { font-size: 13px; color: var(--muted); margin: 10px 2px 0; }
+.share { margin-top: 16px; display: grid; gap: 12px; }
+.shot { display: block; width: 100%; height: auto; border-radius: 14px; border: 1px solid var(--line); }
 
 .panel { margin-top: 14px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px; display: grid; gap: 12px; }
 .panel h3 { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
@@ -173,6 +177,7 @@ tr.fin td:nth-child(2) { font-weight: 700; }
   <nav class="tabs" role="tablist">
     <button id="tab-spiele" role="tab" data-tab="spiele">Spiele</button>
     <button id="tab-tabelle" role="tab" data-tab="tabelle">Tabelle</button>
+    <button id="tab-endstand" role="tab" data-tab="endstand">Endstand</button>
     <button id="tab-setup" role="tab" data-tab="setup">Setup</button>
   </nav>
   <div id="err" class="error" hidden></div>
@@ -197,6 +202,9 @@ const FIREBASE_CONFIG = {
   appId: "1:1005203388751:web:77336a03efa80f6c04ad3a"
 };
 const ROOT = 'turniere/bierpong-26-v2'; // frischer Speicherplatz, alte Daten bleiben unberührt
+// Turnier abgeschlossen: Seite zeigt nur noch an, nichts wird geschrieben (passend zu den
+// schreibgeschützten Datenbank-Regeln in database.rules.json). Für ein neues Turnier auf false setzen.
+const LOCKED = true;
 const CONFIGURED = !/HIER_EINFUEGEN/.test(FIREBASE_CONFIG.apiKey + FIREBASE_CONFIG.databaseURL);
 const LOCAL = !CONFIGURED || typeof firebase === 'undefined';
 let dbRef = null;
@@ -205,7 +213,7 @@ const KEY = 'bierpong-2026-10-31';
 const DEFAULT_TEAMS = ['Leni & Tobi', 'Vivien & Lukas', 'Paul', 'Diana & Lenny', 'Flo & Sandra'];
 const RACKS = { 6: [3, 2, 1], 10: [4, 3, 2, 1] };
 
-let ui = { tab: 'spiele', confirm: null, pick: {} };
+let ui = { tab: LOCKED ? 'endstand' : 'spiele', confirm: null, pick: {} };
 let S = null;
 
 function shuffle(a) { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
@@ -272,6 +280,16 @@ function standings() {
     (h2h[x.id + '-' + y.id] === x.id ? -1 : h2h[x.id + '-' + y.id] === y.id ? 1 : 0) || y.cups - x.cups);
 }
 function doneCount() { return allMatches().filter(m => status(S.scores[m.key]).st === 'done').length; }
+// Platz 1 und 2 entscheidet das Finale, Plätze 3–5 die Gruppenphase; Statistik inkl. Finale
+function finalStandings() {
+  const fs = status(S.final);
+  if (doneCount() < 10 || fs.st !== 'done') return null;
+  const t = standings().map(r => ({ ...r }));
+  const fin = [t[0], t[1]];
+  fin.forEach((r, i) => { r.played++; r.cups += S.final[i]; r.pts += S.final[i]; });
+  fin[fs.w].wins++; fin[fs.w].pts += 10;
+  return [fin[fs.w], fin[1 - fs.w], ...t.slice(2)];
+}
 
 function rack(n) {
   const rows = RACKS[S.cups]; let k = 0;
@@ -281,7 +299,8 @@ function matchHtml(key, a, b, label, opts = {}) {
   const sc = (key === 'F' ? S.final : S.scores[key]) || [0, 0];
   const s = status(sc);
   const pick = ui.pick[key];
-  const editing = pick !== undefined && !opts.disabled;
+  const ro = opts.disabled || LOCKED;
+  const editing = pick !== undefined && !ro;
   const chip = opts.disabled ? '<span class="chip open">noch offen</span>'
     : s.st === 'done' ? '<span class="chip done">fertig</span>'
     : s.st === 'bad' ? '<span class="chip bad">prüfen</span>' : '<span class="chip open">offen</span>';
@@ -289,7 +308,7 @@ function matchHtml(key, a, b, label, opts = {}) {
   const winSide = editing ? pick : (s.st === 'done' ? s.w : null);
   const btn = i => {
     const cls = winSide === null ? '' : winSide === i ? (editing ? 'pick' : 'win') : 'lose';
-    return `<button class="team-btn ${cls}" id="w-${key}-${i}" data-k="${key}" data-win="${i}" ${opts.disabled ? 'disabled' : ''}
+    return `<button class="team-btn ${cls}" id="w-${key}-${i}" data-k="${key}" data-win="${i}" ${ro ? 'disabled' : ''}
       aria-pressed="${winSide === i}">${esc(names[i])}</button>`;
   };
   let body = '';
@@ -303,10 +322,10 @@ function matchHtml(key, a, b, label, opts = {}) {
   } else if (s.st === 'done') {
     const c = sc[s.w];
     body = `<div class="result"><span class="sum">${rack(c)}<span>${c} Becher übrig · <strong>+${10 + c} Pkt</strong></span></span>
-      <button class="linkbtn" id="e-${key}" data-k="${key}" data-act="edit">Ändern</button></div>`;
+      ${ro ? '' : `<button class="linkbtn" id="e-${key}" data-k="${key}" data-act="edit">Ändern</button>`}</div>`;
   } else if (s.st === 'bad') {
-    body = `<p class="hint">Unklares Ergebnis. Bitte Sieger neu antippen.</p>`;
-  } else if (!opts.disabled) {
+    body = `<p class="hint">Unklares Ergebnis.${ro ? '' : ' Bitte Sieger neu antippen.'}</p>`;
+  } else if (!ro) {
     body = `<p class="ask">Sieger antippen</p>`;
   }
   return `<div class="match ${opts.cls || ''}">
@@ -348,8 +367,159 @@ function viewTabelle() {
   t.forEach((r, i) => {
     h += `<tr class="${i < 2 ? 'fin' : ''}"><td>${i + 1}</td><td>${esc(r.name)}</td><td>${r.played}</td><td>${r.wins}</td><td>${r.cups}</td><td class="pts">${r.pts}</td></tr>`;
   });
-  h += `</tbody></table><p class="note">Rot markiert: aktuell im Finale. Bei Punktgleichheit zählen erst die Siege, dann der direkte Vergleich, dann die übrigen Becher.</p>`;
+  h += `</tbody></table><p class="note">Nur Gruppenphase. Rot markiert: ${status(S.final).st === 'done' ? 'Finalisten' : 'aktuell im Finale'}. Bei Punktgleichheit zählen erst die Siege, dann der direkte Vergleich, dann die übrigen Becher.</p>`;
   return h;
+}
+function viewEndstand() {
+  const t = finalStandings();
+  if (!t) return `<p class="note">Der Endstand steht nach dem Finale fest. Bis dahin zeigt die Tabelle den Stand der Gruppenphase.</p>`;
+  const left = S.final[status(S.final).w];
+  let h = `<div class="champ"><small>Turniersieger</small><strong>${esc(t[0].name)}</strong>
+    <span>Finale gegen ${esc(t[1].name)} · ${left} Becher übrig</span></div>`;
+  h += `<table><thead><tr><th>#</th><th>Team</th><th>Sp</th><th>S</th><th>Becher</th><th>Pkt</th></tr></thead><tbody>`;
+  t.forEach((r, i) => {
+    h += `<tr class="${i < 3 ? 'fin' : ''}"><td>${i + 1}</td><td>${esc(r.name)}</td><td>${r.played}</td><td>${r.wins}</td><td>${r.cups}</td><td class="pts">${r.pts}</td></tr>`;
+  });
+  h += `</tbody></table><p class="note">Platz 1 und 2 im Finale entschieden, Plätze 3 bis 5 nach der Gruppenphase. Spiele, Siege, Becher und Punkte inklusive Finale.</p>`;
+  h += `<div class="share"><button class="btn solid" id="b-shot" data-act="shot">Als Bild teilen</button>
+    <img id="shot" class="shot" alt="Endstand als Bild" hidden></div>`;
+  return h;
+}
+
+/* ---------- Endstand als Bild (1080×1440, zum Teilen per WhatsApp & Co.) ---------- */
+let shot = { key: null, blob: null, url: null };
+function rrect(c, x, y, w, h, r) {
+  c.beginPath(); c.moveTo(x + r, y);
+  c.arcTo(x + w, y, x + w, y + h, r); c.arcTo(x + w, y + h, x, y + h, r);
+  c.arcTo(x, y + h, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath();
+}
+// Schriftgröße verkleinern, bis der Text in max Pixel passt
+function fitFont(c, text, max, size, font) {
+  while (size > 14) { c.font = font(size); if (c.measureText(text).width <= max) break; size -= 2; }
+  c.font = font(size);
+}
+function spacing(c, px) { if ('letterSpacing' in c) c.letterSpacing = px + 'px'; }
+function drawBat(c, x, y, s) {
+  c.fillStyle = '#05060d'; c.beginPath(); c.moveTo(x, y);
+  c.quadraticCurveTo(x - s * .5, y - s * .5, x - s, y - s * .1);
+  c.quadraticCurveTo(x - s * .7, y, x - s * .6, y + s * .25);
+  c.quadraticCurveTo(x - s * .35, y + s * .05, x, y + s * .3);
+  c.quadraticCurveTo(x + s * .35, y + s * .05, x + s * .6, y + s * .25);
+  c.quadraticCurveTo(x + s * .7, y, x + s, y - s * .1);
+  c.quadraticCurveTo(x + s * .5, y - s * .5, x, y);
+  c.fill();
+}
+function drawTrophy(c, x, y, s) {
+  const g = c.createLinearGradient(x - s * .4, 0, x + s * .4, 0);
+  g.addColorStop(0, '#f7d36b'); g.addColorStop(.45, '#fff1b8'); g.addColorStop(1, '#d9930f');
+  c.strokeStyle = '#f3b53b'; c.lineWidth = s * .07;
+  c.beginPath(); c.arc(x - s * .4, y + s * .2, s * .15, Math.PI / 2, Math.PI * 1.5); c.stroke();
+  c.beginPath(); c.arc(x + s * .4, y + s * .2, s * .15, -Math.PI / 2, Math.PI / 2); c.stroke();
+  c.fillStyle = g; c.beginPath(); c.moveTo(x - s * .4, y); c.lineTo(x + s * .4, y);
+  c.quadraticCurveTo(x + s * .4, y + s * .6, x, y + s * .62);
+  c.quadraticCurveTo(x - s * .4, y + s * .6, x - s * .4, y); c.fill();
+  c.fillRect(x - s * .06, y + s * .6, s * .12, s * .18);
+  rrect(c, x - s * .25, y + s * .78, s * .5, s * .12, s * .03); c.fill();
+}
+function drawShot(c, t) {
+  const W = 1080, H = 1440, X = 80;
+  const disp = s => `400 ${s}px "Bowlby One", "Arial Black", sans-serif`;
+  const body = w => s => `${w} ${s}px Figtree, system-ui, sans-serif`;
+  const medal = ['#f3b53b', '#c9cedb', '#c27a45'];
+  // Nachthimmel, Sterne, Mond, Fledermäuse
+  const bg = c.createLinearGradient(0, 0, 0, H); bg.addColorStop(0, '#0e1120'); bg.addColorStop(1, '#2a1238');
+  c.fillStyle = bg; c.fillRect(0, 0, W, H);
+  let seed = 31; const rnd = () => (seed = seed * 16807 % 2147483647) / 2147483647;
+  c.fillStyle = '#fff';
+  for (let i = 0; i < 70; i++) { c.globalAlpha = .2 + rnd() * .6; c.beginPath(); c.arc(rnd() * W, rnd() * 720, 1 + rnd() * 2.2, 0, 7); c.fill(); }
+  c.globalAlpha = 1;
+  c.save(); c.shadowColor = 'rgba(243,231,196,.6)'; c.shadowBlur = 60; c.fillStyle = '#f3e7c4';
+  c.beginPath(); c.arc(910, 150, 78, 0, 7); c.fill(); c.restore();
+  c.fillStyle = 'rgba(120,100,60,.15)';
+  [[885, 128, 15], [942, 172, 11], [902, 192, 7]].forEach(([x, y, r]) => { c.beginPath(); c.arc(x, y, r, 0, 7); c.fill(); });
+  drawBat(c, 850, 215, 46); drawBat(c, 990, 92, 30); drawBat(c, 760, 118, 22);
+  // Titel
+  c.textAlign = 'left'; c.fillStyle = '#9ba1ba'; c.font = body(600)(26); spacing(c, 3);
+  c.fillText('SA, 31. OKTOBER 2026 · ENDSTAND', X, 110); spacing(c, 0);
+  c.font = disp(84); c.fillStyle = '#eef0f8'; c.fillText('Halloween-', X, 205);
+  c.fillStyle = '#ff5566'; c.fillText('Bierpong', X, 295);
+  // Siegerkarte
+  const cg = c.createLinearGradient(60, 340, 1020, 590); cg.addColorStop(0, '#b81d30'); cg.addColorStop(1, '#ff5566');
+  rrect(c, 60, 340, 960, 250, 36); c.fillStyle = cg; c.fill();
+  drawTrophy(c, 185, 378, 175);
+  c.fillStyle = 'rgba(255,255,255,.85)'; c.font = body(700)(24); spacing(c, 3);
+  c.fillText('TURNIERSIEGER', 330, 420); spacing(c, 0);
+  c.fillStyle = '#fff'; fitFont(c, t[0].name, 640, 64, disp); c.fillText(t[0].name, 330, 495);
+  const sub = `Finale gegen ${t[1].name} · ${S.final[status(S.final).w]} Becher übrig`;
+  c.fillStyle = 'rgba(255,255,255,.9)'; fitFont(c, sub, 640, 28, body(500)); c.fillText(sub, 330, 548);
+  // Podest: 2 – 1 – 3
+  const base = 980;
+  [[1, 260, 140], [0, 540, 190], [2, 820, 100]].forEach(([i, cx, h]) => {
+    const top = base - h;
+    rrect(c, cx - 125, top, 250, h, 18); c.fillStyle = medal[i]; c.fill();
+    c.fillRect(cx - 125, base - 18, 250, 18);
+    c.textAlign = 'center'; c.fillStyle = '#171a2c'; c.font = disp(72); c.fillText(i + 1, cx, top + 82);
+    c.fillStyle = '#eef0f8'; fitFont(c, t[i].name, 250, 34, body(700)); c.fillText(t[i].name, cx, top - 58);
+    c.fillStyle = '#9ba1ba'; c.font = body(600)(24); c.fillText(t[i].pts + ' Pkt', cx, top - 22);
+  });
+  c.fillStyle = 'rgba(255,255,255,.18)'; c.fillRect(60, base, 960, 3);
+  // Tabelle
+  const cols = [[740, 'SIEGE', r => r.wins], [880, 'BECHER', r => r.cups]];
+  c.fillStyle = '#9ba1ba'; c.font = body(600)(22); spacing(c, 2);
+  c.textAlign = 'center'; c.fillText('#', 100, 1052);
+  c.textAlign = 'left'; c.fillText('TEAM', 150, 1052);
+  c.textAlign = 'right'; cols.forEach(([x, l]) => c.fillText(l, x, 1052)); c.fillText('PKT', 1000, 1052); spacing(c, 0);
+  t.forEach((r, i) => {
+    const y = 1072 + i * 56;
+    rrect(c, 60, y, 960, 48, 12); c.fillStyle = i % 2 ? 'rgba(255,255,255,.03)' : 'rgba(255,255,255,.07)'; c.fill();
+    c.textAlign = 'center'; c.fillStyle = medal[i] || '#9ba1ba'; c.font = disp(28); c.fillText(i + 1, 100, y + 35);
+    c.textAlign = 'left'; c.fillStyle = '#eef0f8'; fitFont(c, r.name, 520, 28, body(600)); c.fillText(r.name, 150, y + 34);
+    c.textAlign = 'right'; c.font = body(600)(26); cols.forEach(([x, , f]) => c.fillText(f(r), x, y + 34));
+    c.fillStyle = '#ff5566'; c.font = disp(28); c.fillText(r.pts, 1000, y + 35);
+  });
+  // Fußzeile mit Becher-Dreieck und Ball
+  c.textAlign = 'left'; c.fillStyle = '#9ba1ba'; c.font = body(500)(22);
+  c.fillText('Platz 1–2 im Finale entschieden · Werte inkl. Finale', X, 1402);
+  [3, 2, 1].forEach((n, j) => {
+    for (let k = 0; k < n; k++) {
+      const x = 960 - (n - 1) * 13 + k * 26, y = 1370 + j * 23;
+      c.beginPath(); c.arc(x, y, 12, 0, 7); c.fillStyle = '#cf2638'; c.fill();
+      c.lineWidth = 3; c.strokeStyle = '#f2f3f7'; c.stroke();
+      c.beginPath(); c.arc(x, y, 7, 0, 7); c.fillStyle = '#8e1422'; c.fill();
+    }
+  });
+  c.beginPath(); c.arc(1030, 1352, 8, 0, 7); c.fillStyle = '#fff'; c.fill();
+}
+function fontsReady() {
+  if (!document.fonts) return Promise.resolve();
+  return Promise.all(['400 40px "Bowlby One"', '500 20px Figtree', '600 20px Figtree', '700 20px Figtree']
+    .map(f => document.fonts.load(f))).catch(() => {});
+}
+// Bild schon beim Öffnen des Tabs erzeugen, damit Teilen direkt im Tipp passiert (iOS verlangt das)
+function prepareShot() {
+  const t = finalStandings(), img = document.getElementById('shot');
+  if (!t || !img) return;
+  const key = JSON.stringify([t, S.final]);
+  const show = () => { const i = document.getElementById('shot'); if (i && shot.url) { i.src = shot.url; i.hidden = false; } };
+  if (shot.key === key) return show();
+  if (shot.url) URL.revokeObjectURL(shot.url);
+  shot = { key, blob: null, url: null };
+  fontsReady().then(() => {
+    const cv = document.createElement('canvas'); cv.width = 1080; cv.height = 1440;
+    drawShot(cv.getContext('2d'), t);
+    cv.toBlob(b => { if (shot.key !== key || !b) return; shot.blob = b; shot.url = URL.createObjectURL(b); show(); }, 'image/png');
+  });
+}
+function shareShot() {
+  if (!shot.blob) return;
+  const file = new File([shot.blob], 'bierpong-endstand.png', { type: 'image/png' });
+  const mobile = matchMedia('(pointer: coarse)').matches;
+  if (mobile && navigator.canShare && navigator.canShare({ files: [file] })) {
+    navigator.share({ files: [file], title: 'Halloween-Bierpong Endstand' }).catch(() => {});
+    return;
+  }
+  const a = document.createElement('a'); a.href = shot.url; a.download = file.name;
+  document.body.appendChild(a); a.click(); a.remove();
 }
 function viewSetup() {
   const c = ui.confirm;
@@ -374,7 +544,8 @@ function render() {
   const focusId = a && a.id;
   const typing = a && a.dataset && a.dataset.team != null ? { v: a.value, s: a.selectionStart, e: a.selectionEnd } : null;
   document.querySelectorAll('nav.tabs button').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === ui.tab));
-  document.getElementById('app').innerHTML = ui.tab === 'spiele' ? viewSpiele() : ui.tab === 'tabelle' ? viewTabelle() : viewSetup();
+  document.getElementById('app').innerHTML = ui.tab === 'spiele' ? viewSpiele() : ui.tab === 'tabelle' ? viewTabelle() : ui.tab === 'endstand' ? viewEndstand() : viewSetup();
+  if (ui.tab === 'endstand') prepareShot();
   if (focusId) {
     const el = document.getElementById(focusId);
     if (el && !el.disabled) {
@@ -424,11 +595,11 @@ function start() {
   firebase.initializeApp(FIREBASE_CONFIG);
   const db = firebase.database();
   dbRef = db.ref(ROOT);
-  dbRef.transaction(cur => cur || fresh()).catch(showError);
+  if (!LOCKED) dbRef.transaction(cur => cur || fresh()).catch(showError);
   dbRef.on('value', snap => {
     const v = snap.val();
     if (!v || !v.rounds) return;
-    if (needsMigration(v)) {
+    if (!LOCKED && needsMigration(v)) {
       dbRef.update({ rounds: fixedRounds(), scheduleId: SCHEDULE_ID, scores: null, final: [0, 0] }).catch(showError);
       return;
     }
@@ -443,6 +614,8 @@ document.querySelector('nav.tabs').addEventListener('click', e => {
 });
 document.getElementById('app').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b || !S) return;
+  if (b.dataset.act === 'shot') return shareShot();
+  if (LOCKED) return;
   const k = b.dataset.k;
   if (k) {
     const act0 = b.dataset.act;
@@ -470,11 +643,12 @@ document.getElementById('app').addEventListener('click', e => {
 });
 // Teamnamen werden beim Verlassen des Feldes gespeichert
 document.getElementById('app').addEventListener('change', e => {
-  const i = e.target.dataset.team; if (i == null || !S) return;
+  const i = e.target.dataset.team; if (i == null || !S || LOCKED) return;
   const name = e.target.value.trim() || ('Team ' + (+i + 1));
   S.teams[+i] = name;
   commit({ ['teams/' + i]: name });
 });
+if (LOCKED) document.getElementById('tab-setup').hidden = true;
 start();
 </script>
 </body>

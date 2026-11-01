@@ -1,0 +1,11 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "turniere": {
+      "bierpong-26-v2": {
+        ".read": true
+      }
+    }
+  }
+}
