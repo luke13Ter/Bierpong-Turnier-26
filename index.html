@@ -147,6 +147,8 @@ td.pts { font-weight: 700; font-size: 17px; }
 tr.fin td:first-child { color: var(--cup); font-family: var(--display); }
 tr.fin td:nth-child(2) { font-weight: 700; }
 .note { font-size: 13px; color: var(--muted); margin: 10px 2px 0; }
+.tag { display: block; width: fit-content; margin-top: 3px; padding: 1px 7px; border-radius: 999px; font: 600 11px var(--body); text-transform: uppercase; letter-spacing: .06em; background: var(--bg); color: var(--muted); }
+.tag.win { background: var(--beer); color: #1a1200; }
 .share { margin-top: 16px; display: grid; gap: 12px; }
 .shot { display: block; width: 100%; height: auto; border-radius: 14px; border: 1px solid var(--line); }
 
@@ -280,15 +282,12 @@ function standings() {
     (h2h[x.id + '-' + y.id] === x.id ? -1 : h2h[x.id + '-' + y.id] === y.id ? 1 : 0) || y.cups - x.cups);
 }
 function doneCount() { return allMatches().filter(m => status(S.scores[m.key]).st === 'done').length; }
-// Platz 1 und 2 entscheidet das Finale, Plätze 3–5 die Gruppenphase; Statistik inkl. Finale
+// Platz 1 und 2 entscheidet das Finale, Plätze 3–5 die Gruppenphase; Statistik nur aus der Gruppenphase
 function finalStandings() {
   const fs = status(S.final);
   if (doneCount() < 10 || fs.st !== 'done') return null;
-  const t = standings().map(r => ({ ...r }));
-  const fin = [t[0], t[1]];
-  fin.forEach((r, i) => { r.played++; r.cups += S.final[i]; r.pts += S.final[i]; });
-  fin[fs.w].wins++; fin[fs.w].pts += 10;
-  return [fin[fs.w], fin[1 - fs.w], ...t.slice(2)];
+  const t = standings();
+  return [t[fs.w], t[1 - fs.w], ...t.slice(2)];
 }
 
 function rack(n) {
@@ -375,12 +374,13 @@ function viewEndstand() {
   if (!t) return `<p class="note">Der Endstand steht nach dem Finale fest. Bis dahin zeigt die Tabelle den Stand der Gruppenphase.</p>`;
   const left = S.final[status(S.final).w];
   let h = `<div class="champ"><small>Turniersieger</small><strong>${esc(t[0].name)}</strong>
-    <span>Finale gegen ${esc(t[1].name)} · ${left} Becher übrig</span></div>`;
+    <span>Finale gegen ${esc(t[1].name)} gewonnen · ${left} Becher übrig</span></div>`;
   h += `<table><thead><tr><th>#</th><th>Team</th><th>Sp</th><th>S</th><th>Becher</th><th>Pkt</th></tr></thead><tbody>`;
   t.forEach((r, i) => {
-    h += `<tr class="${i < 3 ? 'fin' : ''}"><td>${i + 1}</td><td>${esc(r.name)}</td><td>${r.played}</td><td>${r.wins}</td><td>${r.cups}</td><td class="pts">${r.pts}</td></tr>`;
+    const tag = i === 0 ? '<span class="tag win">Finale gewonnen</span>' : i === 1 ? '<span class="tag">Finale verloren</span>' : '';
+    h += `<tr class="${i < 3 ? 'fin' : ''}"><td>${i + 1}</td><td>${esc(r.name)}${tag}</td><td>${r.played}</td><td>${r.wins}</td><td>${r.cups}</td><td class="pts">${r.pts}</td></tr>`;
   });
-  h += `</tbody></table><p class="note">Platz 1 und 2 im Finale entschieden, Plätze 3 bis 5 nach der Gruppenphase. Spiele, Siege, Becher und Punkte inklusive Finale.</p>`;
+  h += `</tbody></table><p class="note">Platz 1 und 2 im Finale entschieden, Plätze 3 bis 5 nach der Gruppenphase. Spiele, Siege, Becher und Punkte nur aus der Gruppenphase.</p>`;
   h += `<div class="share"><button class="btn solid" id="b-shot" data-act="shot">Als Bild teilen</button>
     <img id="shot" class="shot" alt="Endstand als Bild" hidden></div>`;
   return h;
@@ -450,7 +450,7 @@ function drawShot(c, t) {
   c.fillStyle = 'rgba(255,255,255,.85)'; c.font = body(700)(24); spacing(c, 3);
   c.fillText('TURNIERSIEGER', 330, 420); spacing(c, 0);
   c.fillStyle = '#fff'; fitFont(c, t[0].name, 640, 64, disp); c.fillText(t[0].name, 330, 495);
-  const sub = `Finale gegen ${t[1].name} · ${S.final[status(S.final).w]} Becher übrig`;
+  const sub = `Finale gegen ${t[1].name} gewonnen · ${S.final[status(S.final).w]} Becher übrig`;
   c.fillStyle = 'rgba(255,255,255,.9)'; fitFont(c, sub, 640, 28, body(500)); c.fillText(sub, 330, 548);
   // Podest: 2 – 1 – 3
   const base = 980;
@@ -460,7 +460,8 @@ function drawShot(c, t) {
     c.fillRect(cx - 125, base - 18, 250, 18);
     c.textAlign = 'center'; c.fillStyle = '#171a2c'; c.font = disp(72); c.fillText(i + 1, cx, top + 82);
     c.fillStyle = '#eef0f8'; fitFont(c, t[i].name, 250, 34, body(700)); c.fillText(t[i].name, cx, top - 58);
-    c.fillStyle = '#9ba1ba'; c.font = body(600)(24); c.fillText(t[i].pts + ' Pkt', cx, top - 22);
+    c.fillStyle = i ? '#9ba1ba' : '#f3b53b'; c.font = body(600)(24);
+    c.fillText(['Finale gewonnen', 'Finale verloren', '3. der Gruppenphase'][i], cx, top - 22);
   });
   c.fillStyle = 'rgba(255,255,255,.18)'; c.fillRect(60, base, 960, 3);
   // Tabelle
@@ -468,18 +469,29 @@ function drawShot(c, t) {
   c.fillStyle = '#9ba1ba'; c.font = body(600)(22); spacing(c, 2);
   c.textAlign = 'center'; c.fillText('#', 100, 1052);
   c.textAlign = 'left'; c.fillText('TEAM', 150, 1052);
-  c.textAlign = 'right'; cols.forEach(([x, l]) => c.fillText(l, x, 1052)); c.fillText('PKT', 1000, 1052); spacing(c, 0);
+  c.textAlign = 'center'; c.fillText('FINALE', 590, 1052);
+  c.textAlign = 'right'; cols.forEach(([x, l]) => c.fillText(l, x, 1052)); c.fillText('PKT', 1000, 1052);
+  // Siege/Becher/Punkte stammen nur aus der Gruppenphase
+  c.textAlign = 'center'; c.fillStyle = '#6b7190'; c.font = body(600)(18); c.fillText('GRUPPENPHASE', 840, 1014);
+  spacing(c, 0); c.fillStyle = 'rgba(255,255,255,.15)'; c.fillRect(670, 1024, 340, 2);
   t.forEach((r, i) => {
     const y = 1072 + i * 56;
     rrect(c, 60, y, 960, 48, 12); c.fillStyle = i % 2 ? 'rgba(255,255,255,.03)' : 'rgba(255,255,255,.07)'; c.fill();
     c.textAlign = 'center'; c.fillStyle = medal[i] || '#9ba1ba'; c.font = disp(28); c.fillText(i + 1, 100, y + 35);
-    c.textAlign = 'left'; c.fillStyle = '#eef0f8'; fitFont(c, r.name, 520, 28, body(600)); c.fillText(r.name, 150, y + 34);
-    c.textAlign = 'right'; c.font = body(600)(26); cols.forEach(([x, , f]) => c.fillText(f(r), x, y + 34));
+    c.textAlign = 'left'; c.fillStyle = '#eef0f8'; fitFont(c, r.name, 330, 28, body(600)); c.fillText(r.name, 150, y + 34);
+    c.textAlign = 'center';
+    if (i < 2) {
+      rrect(c, 520, y + 9, 140, 30, 15); spacing(c, 1); c.font = body(700)(17);
+      if (i === 0) { c.fillStyle = '#f3b53b'; c.fill(); c.fillStyle = '#171a2c'; c.fillText('GEWONNEN', 590, y + 30); }
+      else { c.lineWidth = 2; c.strokeStyle = '#9ba1ba'; c.stroke(); c.fillStyle = '#c9cedb'; c.fillText('VERLOREN', 590, y + 30); }
+      spacing(c, 0);
+    } else { c.fillStyle = '#6b7190'; c.font = body(600)(26); c.fillText('–', 590, y + 34); }
+    c.textAlign = 'right'; c.fillStyle = '#eef0f8'; c.font = body(600)(26); cols.forEach(([x, , f]) => c.fillText(f(r), x, y + 34));
     c.fillStyle = '#ff5566'; c.font = disp(28); c.fillText(r.pts, 1000, y + 35);
   });
   // Fußzeile mit Becher-Dreieck und Ball
   c.textAlign = 'left'; c.fillStyle = '#9ba1ba'; c.font = body(500)(22);
-  c.fillText('Platz 1–2 im Finale entschieden · Werte inkl. Finale', X, 1402);
+  c.fillText('Platz 1–2 im Finale entschieden · Statistik aus der Gruppenphase', X, 1402);
   [3, 2, 1].forEach((n, j) => {
     for (let k = 0; k < n; k++) {
       const x = 960 - (n - 1) * 13 + k * 26, y = 1370 + j * 23;
